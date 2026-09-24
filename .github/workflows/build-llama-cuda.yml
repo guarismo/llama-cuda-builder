@@ -108,6 +108,7 @@ jobs:
             -DGGML_NATIVE=OFF \
             -DGGML_AVX=ON -DGGML_FMA=ON -DGGML_F16C=ON \
             -DGGML_AVX2=OFF -DGGML_AVX512=OFF \
+            -DGGML_BMI2=OFF -DGGML_AVX_VNNI=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
@@ -129,13 +130,21 @@ jobs:
           sha256sum "$NAME" > "$NAME.sha256"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           ls -lh "$NAME"
-          # sanity: this binary must not contain AVX2/AVX-512 instructions
-          if objdump -d staging/usr/local/bin/llama-server \
-               | grep -qE '%ymm|%zmm'; then
-            echo "::error::AVX2/AVX-512 registers found in llama-server -- it would SIGILL on the FX-8350"
-            exit 1
-          fi
-          echo "  verified: no ymm/zmm registers in llama-server"
+
+      # Run the real binary on an emulated Piledriver. Grepping mnemonics does not
+      # work: llama-server is a 17KB shim and the code lives in libggml-cpu.so, and
+      # a hand-written opcode list will always miss something -- it missed BMI2
+      # (shlx in ggml_cpu_init), which SIGILL'd on the box. Executing under
+      # -cpu bdver2 catches anything the target CPU cannot run.
+      - name: Verify against an emulated FX-8350 (bdver2)
+        if: steps.pick.outputs.build == 'yes'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq qemu-user-static
+          LD_LIBRARY_PATH="$PWD/staging/usr/local/lib" \
+            qemu-x86_64-static -cpu bdver2 \
+            staging/usr/local/bin/llama-server --version 2>&1 | tail -3
+          echo "  ok: runs on an emulated Piledriver"
 
       - name: Publish release
         if: steps.pick.outputs.build == 'yes'

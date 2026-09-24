@@ -41,17 +41,19 @@ ASSET=$(ls ./*.tar.gz)
 sha256sum -c "$ASSET.sha256"
 echo "   checksum ok: $ASSET"
 
-say "Checking the binary matches this CPU"
-# The FX-8350 has no AVX2/AVX-512. A binary built with -march=native on a CI
-# runner would SIGILL here, so refuse it before touching /usr/local.
-tar xzf "$ASSET" -C "$WORK" usr/local/bin/llama-server
-if objdump -d "$WORK/usr/local/bin/llama-server" | grep -qE '%ymm|%zmm'; then
-    echo "   REFUSING: binary uses AVX2/AVX-512 registers, this CPU cannot run it" >&2
+say "Checking the binary actually runs on this CPU"
+# Don't grep for opcodes -- llama-server is a 17KB shim, the code is in
+# libggml-cpu.so, and any hand-written opcode list will miss something. It missed
+# BMI2 (shlx), which SIGILL'd here. Just run the thing: this IS the target CPU.
+tar xzf "$ASSET" -C "$WORK"
+if ! LD_LIBRARY_PATH="$WORK/usr/local/lib" \
+     timeout 60 "$WORK/usr/local/bin/llama-server" --version >"$WORK/ver.txt" 2>&1; then
+    echo "   REFUSING: the binary does not run on this CPU:" >&2
+    tail -3 "$WORK/ver.txt" >&2
+    dmesg -T 2>/dev/null | grep -i 'trap.*llama-server' | tail -1 >&2 || true
     exit 1
 fi
-MISSING=$(for f in avx fma f16c; do grep -qw "$f" /proc/cpuinfo || echo "$f"; done)
-[ -z "$MISSING" ] || { echo "   REFUSING: CPU lacks:$MISSING" >&2; exit 1; }
-echo "   ok: no ymm/zmm, CPU has avx+fma+f16c"
+echo "   ok: $(grep -m1 version "$WORK/ver.txt" || echo 'runs clean')"
 
 say "Backing up the current install"
 CUR=$(llama-server --version 2>&1 | grep -oE 'commit [0-9a-f]+' | awk '{print $2}' || echo unknown)
