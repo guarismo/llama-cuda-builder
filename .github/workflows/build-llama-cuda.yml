@@ -64,15 +64,23 @@ jobs:
 
       # Must stay on CUDA 12.x: shockwave links libcudart.so.12 / libcublas.so.12,
       # so a 13.x build would want .so.13 and fail to load there. The exact minor
-      # does not have to match (12.6 -> 12.4 runtime is covered by CUDA minor
-      # version compatibility); NVIDIA's ubuntu2404 repo has no 12.4 packages,
-      # which is why this is 12.6.3 rather than the box's own 12.4.
-      - name: Install CUDA toolkit 12.6
+      # need not match (12.6 -> 12.4 runtime is covered by CUDA minor version
+      # compatibility); NVIDIA's ubuntu2404 repo has no 12.4 packages.
+      #
+      # Install cuda-toolkit-12-6, NOT the 'cuda' meta-package: the latter pulls
+      # nvidia-dkms-*, which tries to build a kernel module against the runner's
+      # azure kernel and fails. A build host needs the compiler, not a driver.
+      - name: Install CUDA toolkit 12.6 (no driver)
         if: steps.pick.outputs.build == 'yes'
-        uses: Jimver/cuda-toolkit@v0.2.36
-        with:
-          cuda: '12.6.3'
-          method: 'network'
+        run: |
+          set -euo pipefail
+          wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cuda-toolkit-12-6 ccache
+          echo "/usr/local/cuda-12.6/bin" >> "$GITHUB_PATH"
+          echo "CUDACXX=/usr/local/cuda-12.6/bin/nvcc" >> "$GITHUB_ENV"
+          /usr/local/cuda-12.6/bin/nvcc --version | tail -2
 
       - name: Cache ccache
         if: steps.pick.outputs.build == 'yes'
@@ -91,7 +99,6 @@ jobs:
         if: steps.pick.outputs.build == 'yes'
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq ccache
           cmake -B build -DCMAKE_BUILD_TYPE=Release \
             -DGGML_CUDA=ON \
             -DCMAKE_CUDA_ARCHITECTURES=86 \
