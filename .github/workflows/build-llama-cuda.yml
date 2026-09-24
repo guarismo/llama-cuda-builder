@@ -156,3 +156,31 @@ jobs:
           (no AVX2/AVX-512 -- the target CPU is an AMD FX-8350).
 
           Install: \`scripts/install-shockwave.sh $REF\`"
+
+  # GitHub disables scheduled workflows after 60 days with no repo activity, and
+  # this repo's normal state is idle between llama.cpp releases -- so the schedule
+  # would quietly switch itself off and builds would just stop appearing. Commit a
+  # timestamp before that happens. No push trigger exists, so this cannot loop.
+  keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Commit if the repo is going stale
+        run: |
+          set -euo pipefail
+          DAYS=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
+          echo "  days since last commit: $DAYS"
+          if [ "$DAYS" -lt 50 ]; then
+            echo "  nothing to do"
+            exit 0
+          fi
+          date -u +'%Y-%m-%dT%H:%M:%SZ' > .github/keepalive
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/keepalive
+          git commit -m 'chore: keepalive (schedules are disabled after 60 idle days)'
+          git push
+          echo "  pushed keepalive commit"

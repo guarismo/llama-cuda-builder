@@ -65,6 +65,17 @@ crashed `qwen36-35b-a3b` — a preset with `load-on-startup = false`, so it only
 something asked for it. It went unnoticed for days. `verify-presets.py` asks every preset
 the router advertises a real question and checks the answer, not just that it loaded.
 
+## Staying alive
+
+Upstream publishes many prereleases per day (`b11163`, `b11160`, ...); `gh release view`
+returns only the latest **stable** release, so this builds `v0.5.1`, `v0.6.0`, ... and
+ignores the nightlies. It polls every 6h -- GitHub cannot trigger a workflow from another
+repo's release -- so expect up to a 6h lag.
+
+GitHub disables scheduled workflows after 60 days of repo inactivity, and idle is this
+repo's normal state between releases. The `keepalive` job commits a timestamp once the
+last commit is 50+ days old, so the schedule never lapses on its own.
+
 ## Deliberately manual
 
 CI publishes; it does not deploy. Installing stops the service on a machine that serves
