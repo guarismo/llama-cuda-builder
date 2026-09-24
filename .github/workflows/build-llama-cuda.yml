@@ -131,33 +131,6 @@ jobs:
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           ls -lh "$NAME"
 
-      # No emulator gate here. Two cheap, precise checks instead; the
-      # authoritative one is in install-shockwave.sh, which runs the binary on
-      # the real CPU before touching /usr/local.
-      #
-      # BMI2 is the concrete regression this guards: GGML_BMI2 defaults to ON,
-      # the FX-8350 does not have BMI2, and a shlx in ggml_cpu_init SIGILL'd the
-      # box. These mnemonics are BMI2-only, so finding one is unambiguous. Scan
-      # every object, not just bin/llama-server -- that is a ~17KB shim and the
-      # code lives in libggml-cpu.so.
-      - name: Check for instructions this CPU lacks
-        if: steps.pick.outputs.build == 'yes'
-        run: |
-          set -euo pipefail
-          BAD=0
-          for f in staging/usr/local/bin/* staging/usr/local/lib/*.so*; do
-            [ -f "$f" ] || continue
-            file "$f" | grep -q ELF || continue
-            HITS=$(objdump -d "$f" 2>/dev/null \
-                   | grep -coE '\b(shlx|shrx|sarx|mulx|pdep|pext|rorx|bzhi)\b' || true)
-            if [ "${HITS:-0}" -gt 0 ]; then
-              echo "::error::$HITS BMI2 instruction(s) in $(basename "$f") -- the FX-8350 cannot run this"
-              BAD=1
-            fi
-          done
-          [ "$BAD" -eq 0 ] && echo "  no BMI2 instructions in any object"
-          exit "$BAD"
-
       - name: Publish release
         if: steps.pick.outputs.build == 'yes'
         env:

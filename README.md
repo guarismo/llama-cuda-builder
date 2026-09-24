@@ -34,11 +34,15 @@ turn off BMI2, and a `shlx` in `ggml_cpu_init` will SIGILL on this CPU. It isn't
 startup concern either -- `qwen36-35b-a3b` runs `--n-cpu-moe 8`, so CPU kernels execute
 on every token.
 
-CI scans every object for BMI2 mnemonics, but the authoritative check is in the
-installer: it **runs the binary on the real CPU** before touching `/usr/local`. Grepping
-for opcodes is always an incomplete list -- an early version checked `bin/llama-server`
-for `%ymm`, which is wrong twice over (that file is a 17KB shim, and `%ymm` is plain AVX,
-which this CPU has). It reported success on a binary that could not start.
+**CI compiles; shockwave tests.** CI has no FX-8350 and cannot emulate one reliably, so
+it makes no claim about CPU compatibility. The installer runs the binary on the real CPU
+before touching `/usr/local`, and refuses if it will not start.
+
+Earlier versions tried to check in CI and were worse than nothing: one grepped
+`bin/llama-server` for `%ymm` -- wrong file (a 17KB shim; the code is in
+`libggml-cpu.so`) and wrong instruction class (`%ymm` is plain AVX, which this CPU has),
+so it reported success on a binary that could not start. A qemu gate then burned two
+runs on its own bugs. Correct flags plus an on-target test is the whole strategy.
 
 CUDA stays on **12.x** (CI uses 12.6.3). The box links `libcudart.so.12`/`libcublas.so.12`,
 so a 13.x build would want `.so.13` and fail to load. The minor version need not match.
