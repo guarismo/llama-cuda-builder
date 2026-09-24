@@ -1,0 +1,147 @@
+name: build llama.cpp (CUDA sm_86, FX-8350)
+
+# Watches ggml-org/llama.cpp for new releases and builds a binary tarball
+# targeted at shockwave. Nothing here patches llama.cpp -- it builds upstream
+# tags verbatim, only the build FLAGS are ours.
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'upstream tag/commit to build (default: latest release)'
+        required: false
+      force:
+        description: 'rebuild even if a release for that tag already exists'
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-llama
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      # Inputs go through env, never interpolated straight into run:.
+      - name: Decide what to build
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_INPUT: ${{ inputs.ref }}
+          FORCE_INPUT: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          REF="$REF_INPUT"
+          if [ -z "$REF" ]; then
+            REF=$(gh release view --repo ggml-org/llama.cpp --json tagName -q .tagName)
+          fi
+          case "$REF" in
+            *[!A-Za-z0-9._/-]*) echo "refusing suspicious ref: $REF" >&2; exit 1 ;;
+          esac
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          if [ "$FORCE_INPUT" != 'true' ] \
+             && gh release view "$REF" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "  $REF already built -- skipping"
+            echo "build=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "  will build $REF"
+            echo "build=yes" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout upstream
+        if: steps.pick.outputs.build == 'yes'
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ steps.pick.outputs.ref }}
+          fetch-depth: 1
+
+      # CUDA 12.4 to match shockwave's runtime. Building with 13.x would produce
+      # a binary that wants libcudart.so.13, which is not installed there.
+      - name: Install CUDA toolkit 12.4
+        if: steps.pick.outputs.build == 'yes'
+        uses: Jimver/cuda-toolkit@v0.2.19
+        with:
+          cuda: '12.4.1'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas-dev", "nvrtc", "nvrtc-dev"]'
+
+      - name: Cache ccache
+        if: steps.pick.outputs.build == 'yes'
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ steps.pick.outputs.ref }}
+          restore-keys: ccache-
+
+      # CRITICAL: GGML_NATIVE must stay OFF. The runner is a modern Xeon/EPYC with
+      # AVX2/AVX-512; shockwave is an AMD FX-8350 (Piledriver) with only avx, fma,
+      # f16c. A -march=native build here would SIGILL there. These flags mirror
+      # exactly what that CPU supports -- and it matters at runtime, not just at
+      # startup, because qwen36-35b-a3b runs with --n-cpu-moe 8.
+      - name: Configure
+        if: steps.pick.outputs.build == 'yes'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq ccache
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_ARCHITECTURES=86 \
+            -DGGML_RPC=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_AVX=ON -DGGML_FMA=ON -DGGML_F16C=ON \
+            -DGGML_AVX2=OFF -DGGML_AVX512=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        if: steps.pick.outputs.build == 'yes'
+        run: cmake --build build --config Release -j"$(nproc)"
+
+      - name: Stage install tree
+        if: steps.pick.outputs.build == 'yes'
+        id: pack
+        env:
+          REF: ${{ steps.pick.outputs.ref }}
+        run: |
+          set -euo pipefail
+          cmake --install build --prefix "$PWD/staging/usr/local"
+          NAME="llama-${REF}-linux-x64-cuda12.4-sm86-avx-fma-f16c.tar.gz"
+          tar czf "$NAME" -C staging usr
+          sha256sum "$NAME" > "$NAME.sha256"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -lh "$NAME"
+          # sanity: this binary must not contain AVX2/AVX-512 instructions
+          if objdump -d staging/usr/local/bin/llama-server \
+               | grep -qE '%ymm|%zmm'; then
+            echo "::error::AVX2/AVX-512 registers found in llama-server -- it would SIGILL on the FX-8350"
+            exit 1
+          fi
+          echo "  verified: no ymm/zmm registers in llama-server"
+
+      - name: Publish release
+        if: steps.pick.outputs.build == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ steps.pick.outputs.ref }}
+          ASSET: ${{ steps.pack.outputs.name }}
+        run: |
+          set -euo pipefail
+          gh release create "$REF" "$ASSET" "$ASSET.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "llama.cpp $REF (CUDA sm_86, FX-8350)" \
+            --notes "Upstream \`$REF\` built verbatim; only the build flags are ours.
+
+          CUDA sm_86 / CUDA 12.4, \`GGML_NATIVE=OFF\` with AVX+FMA+F16C only
+          (no AVX2/AVX-512 -- the target CPU is an AMD FX-8350).
+
+          Install: \`scripts/install-shockwave.sh $REF\`"
