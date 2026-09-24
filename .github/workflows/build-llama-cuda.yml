@@ -141,10 +141,18 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get install -y -qq qemu-user-static
+          # QEMU calls Piledriver "Opteron_G5" -- it has AVX/FMA/F16C/BMI1 but
+          # no BMI2 or AVX2, which is exactly the FX-8350's feature set.
+          MODEL=Opteron_G5
+          if ! qemu-x86_64-static -cpu help | grep -qw "$MODEL"; then
+            echo "::error::qemu has no CPU model $MODEL; available:"
+            qemu-x86_64-static -cpu help | head -30
+            exit 1
+          fi
           LD_LIBRARY_PATH="$PWD/staging/usr/local/lib" \
-            qemu-x86_64-static -cpu bdver2 \
+            qemu-x86_64-static -cpu "$MODEL" \
             staging/usr/local/bin/llama-server --version 2>&1 | tail -3
-          echo "  ok: runs on an emulated Piledriver"
+          echo "  ok: runs on an emulated $MODEL (Piledriver)"
 
       - name: Publish release
         if: steps.pick.outputs.build == 'yes'
