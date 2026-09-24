@@ -18,7 +18,7 @@ tagged with the upstream tag.
 | GPUs | 2× RTX 3060 12 GB → `CMAKE_CUDA_ARCHITECTURES=86` |
 | CPU | **AMD FX-8350** (Piledriver): `avx`, `fma`, `f16c` — **no AVX2, no AVX-512** |
 | OS | Ubuntu 26.04, glibc 2.43, GCC 15.2 |
-| CUDA | 12.4 |
+| CUDA | 12.4 runtime (`libcudart.so.12`) — CI builds with 12.6.3, compatible via major soname |
 
 **The CPU is the part that bites.** Runners are modern Xeon/EPYC. Building with
 `-DGGML_NATIVE=ON` there emits AVX2/AVX-512 and the binary dies with SIGILL on the
@@ -33,8 +33,8 @@ It isn't only a startup concern: `qwen36-35b-a3b` runs `--n-cpu-moe 8`, so CPU k
 execute on every token. Both the workflow and the installer check the built binary for
 `%ymm`/`%zmm` registers and refuse it if present.
 
-CUDA is pinned to **12.4** to match the box. A 13.x build would want `libcudart.so.13`,
-which isn't installed there.
+CUDA stays on **12.x** (CI uses 12.6.3). The box links `libcudart.so.12`/`libcublas.so.12`,
+so a 13.x build would want `.so.13` and fail to load. The minor version need not match.
 
 ## Installing a build
 

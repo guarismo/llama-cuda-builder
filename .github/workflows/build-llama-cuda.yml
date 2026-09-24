@@ -62,15 +62,17 @@ jobs:
           ref: ${{ steps.pick.outputs.ref }}
           fetch-depth: 1
 
-      # CUDA 12.4 to match shockwave's runtime. Building with 13.x would produce
-      # a binary that wants libcudart.so.13, which is not installed there.
-      - name: Install CUDA toolkit 12.4
+      # Must stay on CUDA 12.x: shockwave links libcudart.so.12 / libcublas.so.12,
+      # so a 13.x build would want .so.13 and fail to load there. The exact minor
+      # does not have to match (12.6 -> 12.4 runtime is covered by CUDA minor
+      # version compatibility); NVIDIA's ubuntu2404 repo has no 12.4 packages,
+      # which is why this is 12.6.3 rather than the box's own 12.4.
+      - name: Install CUDA toolkit 12.6
         if: steps.pick.outputs.build == 'yes'
-        uses: Jimver/cuda-toolkit@v0.2.19
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
-          cuda: '12.4.1'
+          cuda: '12.6.3'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas-dev", "nvrtc", "nvrtc-dev"]'
 
       - name: Cache ccache
         if: steps.pick.outputs.build == 'yes'
@@ -115,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           cmake --install build --prefix "$PWD/staging/usr/local"
-          NAME="llama-${REF}-linux-x64-cuda12.4-sm86-avx-fma-f16c.tar.gz"
+          NAME="llama-${REF}-linux-x64-cuda12.6-sm86-avx-fma-f16c.tar.gz"
           tar czf "$NAME" -C staging usr
           sha256sum "$NAME" > "$NAME.sha256"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
@@ -141,7 +143,7 @@ jobs:
             --title "llama.cpp $REF (CUDA sm_86, FX-8350)" \
             --notes "Upstream \`$REF\` built verbatim; only the build flags are ours.
 
-          CUDA sm_86 / CUDA 12.4, \`GGML_NATIVE=OFF\` with AVX+FMA+F16C only
+          CUDA sm_86 / CUDA 12.6 (runs on the box's 12.4 runtime), \`GGML_NATIVE=OFF\` with AVX+FMA+F16C only
           (no AVX2/AVX-512 -- the target CPU is an AMD FX-8350).
 
           Install: \`scripts/install-shockwave.sh $REF\`"
