@@ -136,7 +136,7 @@ jobs:
       # a hand-written opcode list will always miss something -- it missed BMI2
       # (shlx in ggml_cpu_init), which SIGILL'd on the box. Executing under
       # -cpu bdver2 catches anything the target CPU cannot run.
-      - name: Verify against an emulated FX-8350 (bdver2)
+      - name: Verify against an emulated FX-8350 (Opteron_G5)
         if: steps.pick.outputs.build == 'yes'
         run: |
           set -euo pipefail
@@ -144,9 +144,9 @@ jobs:
           # QEMU calls Piledriver "Opteron_G5" -- it has AVX/FMA/F16C/BMI1 but
           # no BMI2 or AVX2, which is exactly the FX-8350's feature set.
           MODEL=Opteron_G5
-          if ! qemu-x86_64-static -cpu help | grep -qw "$MODEL"; then
+          if ! qemu-x86_64-static -cpu help 2>&1 | grep -qw "$MODEL"; then
             echo "::error::qemu has no CPU model $MODEL; available:"
-            qemu-x86_64-static -cpu help | head -30
+            qemu-x86_64-static -cpu help 2>&1 | grep -iE "opteron|epyc|phenom" | head -20
             exit 1
           fi
           LD_LIBRARY_PATH="$PWD/staging/usr/local/lib" \
