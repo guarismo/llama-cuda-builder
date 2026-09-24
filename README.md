@@ -29,9 +29,16 @@ FX-8350, so the workflow pins flags explicitly:
 -DGGML_AVX2=OFF -DGGML_AVX512=OFF
 ```
 
-It isn't only a startup concern: `qwen36-35b-a3b` runs `--n-cpu-moe 8`, so CPU kernels
-execute on every token. Both the workflow and the installer check the built binary for
-`%ymm`/`%zmm` registers and refuse it if present.
+`GGML_BMI2` also defaults to **ON** and must be turned off: turning off AVX2 does not
+turn off BMI2, and a `shlx` in `ggml_cpu_init` will SIGILL on this CPU. It isn't only a
+startup concern either -- `qwen36-35b-a3b` runs `--n-cpu-moe 8`, so CPU kernels execute
+on every token.
+
+CI scans every object for BMI2 mnemonics, but the authoritative check is in the
+installer: it **runs the binary on the real CPU** before touching `/usr/local`. Grepping
+for opcodes is always an incomplete list -- an early version checked `bin/llama-server`
+for `%ymm`, which is wrong twice over (that file is a 17KB shim, and `%ymm` is plain AVX,
+which this CPU has). It reported success on a binary that could not start.
 
 CUDA stays on **12.x** (CI uses 12.6.3). The box links `libcudart.so.12`/`libcublas.so.12`,
 so a 13.x build would want `.so.13` and fail to load. The minor version need not match.
