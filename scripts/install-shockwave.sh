@@ -22,7 +22,21 @@ run() { if [ "$DRY" = "--dry-run" ]; then echo "   would: $*"; else "$@"; fi; }
 
 say "Fetching $TAG from $REPO"
 cd "$WORK"
-gh release download "$TAG" --repo "$REPO" --pattern '*.tar.gz*'
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    gh release download "$TAG" --repo "$REPO" --pattern '*.tar.gz*'
+else
+    # public repo: no auth needed, and shockwave has no gh installed
+    echo "   (no gh; using curl)"
+    API="https://api.github.com/repos/$REPO/releases/tags/$TAG"
+    curl -fsSL "$API" -o rel.json
+    python3 - <<'EOF' > urls.txt
+import json
+for a in json.load(open("rel.json"))["assets"]:
+    print(a["browser_download_url"])
+EOF
+    [ -s urls.txt ] || { echo "   no assets found for $TAG" >&2; exit 1; }
+    while read -r u; do curl -fsSL -O "$u"; done < urls.txt
+fi
 ASSET=$(ls ./*.tar.gz)
 sha256sum -c "$ASSET.sha256"
 echo "   checksum ok: $ASSET"
