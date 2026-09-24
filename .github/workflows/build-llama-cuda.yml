@@ -139,6 +139,14 @@ jobs:
           ASSET: ${{ steps.pack.outputs.name }}
         run: |
           set -euo pipefail
+          # idempotent: force=true re-runs an already-published tag, and
+          # 'release create' refuses when the tag exists.
+          if gh release view "$REF" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$REF" "$ASSET" "$ASSET.sha256" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            echo "  updated existing release $REF"
+            exit 0
+          fi
           gh release create "$REF" "$ASSET" "$ASSET.sha256" \
             --repo "$GITHUB_REPOSITORY" \
             --title "llama.cpp $REF (CUDA sm_86, FX-8350)" \
